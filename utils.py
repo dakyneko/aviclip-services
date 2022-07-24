@@ -35,6 +35,10 @@ def bunchize(x):
     else:
         return x
 
+def mapv(*args, **kwargs):
+    "Like map() but returns a list."
+    return list(map(*args, **kwargs))
+
 def dict_slice(d, start=0, end=-1):
     return dict(list(d.items())[start:end])
 

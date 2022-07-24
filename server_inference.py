@@ -10,8 +10,8 @@ from fastapi.responses import JSONResponse
 
 
 # grayscale only
-#main_dir = '../pics_heads_224x224'
-main_dir = '../pics_thumbs_v3-normalized-grayscaled_216x384'
+main_dir = '../pics_heads_224x224'
+#main_dir = '../pics_thumbs_v3-normalized-grayscaled_216x384'
 
 def path_to_thumb(f, dir=main_dir):
     n = os.path.basename(f)
@@ -22,8 +22,8 @@ def imgs_to_batch(fs):
 
 def image_open(f):
     with Image.open(f) as im:
-        return im.getchannel('L') # for heads
-        #return im.getchannel('R') # for body
+        #return im.getchannel('L') # for heads
+        return im.getchannel('R') # for body
 
 def ims_to_batch(ims):
     b = torch.stack([ Tensor( np.array( im ) ) for im in ims ])
@@ -41,8 +41,8 @@ def batch_to_imgs(b):
 # In[3]:
 
 
-#model_name = 'model_vrc-heads_similarity3_clip_v2-grayscale-50epoches'
-model_name = 'model_vrc_similarity3_clip_v2-grayscale-75epoches'
+model_name = 'model_vrc-heads_similarity3_clip_v2-grayscale-50epoches'
+#model_name = 'model_vrc_similarity3_clip_v2-grayscale-75epoches'
 
 
 # In[4]:
