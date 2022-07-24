@@ -9,6 +9,7 @@ from collections import Counter
 from functools import partial
 from base64 import b64decode
 from io import BytesIO
+import itertools
 
 # Q: could replace requests by grequests for async?
 
@@ -145,6 +146,15 @@ def bunchize(x):
     else:
         return x
 
+def chunker(iterable, n):
+    if type(iterable) == list:
+        iterable = iter(iterable)
+    while True:
+        x = next(iterable, None)
+        if x != None:
+            yield [x] + list(itertools.islice(iterable, n-1))
+        else:
+            break
 
 async def process_attachment(m, a):
     info(f'processing attachment mine={a.content_type} size={a.size/1024:.2f}KB at {a.url}')
@@ -191,27 +201,43 @@ async def process_attachment(m, a):
         error(f'API returned 0 match')
         return await failed(m)
 
-    # build an embed to display all images with details
-    def go(idx, sim, avatar, anns, **kwargs):
-        embed = Embed(description=f'Match {sim*100:.1f}%')
-        embed.add_field(name='name', value=anns.name if 'name' in anns else '(unknown)')
-        if 'creator' in anns:
-            embed.add_field(name='creator', value=anns.creator)
-        if 'category' in anns:
-            embed.add_field(name='category', value=anns.category)
-        # TODO: do we want to expose those (private) info?
-        embed.add_field(name='upload name', value=avatar.name)
-        embed.add_field(name='index', value=idx)
-        embed.set_image(url=f'attachment://result_{idx}.jpg')
-        return embed
+    # compose together all images for easy display
+    # TODO: try pyplt to make montage table with columns, +legends numbers?
+    ims = [ Image.open(BytesIO(b64decode( x.image.base64 )))
+            for x in xs if 'base64' in x.image ]
+    cols = 3
+    wtotal = max(( sum(( im.width for im in ims_ )) for ims_ in chunker(ims, cols) ))
+    htotal = sum(( max(( im.height for im in ims_ )) for ims_ in chunker(ims, cols)  ))
+    montage = Image.new('RGB', (wtotal, htotal))
 
-    files = [ File(BytesIO(b64decode( x.image.base64 )),
-                filename=f'result_{x.idx}.jpg')
-            for x in xs ]
+    # in grid
+    y = 0
+    for ims_ in chunker(ims, cols):
+        x = 0
+        for im in ims_:
+            montage.paste(im, (x, y))
+            x += im.width
+        y += max(( im.height for im in ims_ ))
+
+    bio = BytesIO()
+    montage.save(bio, format='jpeg', quality=85)
+    bio.seek(0) # prepare for reading
+
+    def go(idx, sim, avatar, anns, **kwargs):
+        s = f'- {sim*100:.1f}% '
+        s += anns.get('name', '(unknown)')
+        if 'creator' in anns:
+            s += f' by {anns.creator}'
+        if 'category' in anns:
+            s += f' in the {anns.category} category'
+        # TODO: do we want to expose those (private) info?
+        s += f', upload name: "{avatar.name}"'
+        s += f' #{idx}'
+        return s
 
     await m.reply(
-            embed=[ go(**x) for x in xs ][0],
-            file=files[0])
+            'Closest similar matches:\n' + '\n'.join([go(**x) for x in xs]),
+            file=File(bio, filename='results.jpg'))
 
     info('results: '+ ', '.join(( f'#{x.idx} {x.sim*100:.1f}% "{x.avatar.id}"' for x in xs )))
 
