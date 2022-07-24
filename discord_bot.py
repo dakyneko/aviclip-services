@@ -7,6 +7,8 @@ from PIL import Image, UnidentifiedImageError
 from fastcore.basics import AttrDict
 from collections import Counter
 from functools import partial
+from base64 import b64decode
+from io import BytesIO
 
 # Q: could replace requests by grequests for async?
 
@@ -189,17 +191,44 @@ async def process_attachment(m, a):
         error(f'API returned 0 match')
         return await failed(m)
 
-    def go(x):
-        s = [f'- #{x.idx} {x.sim*100:.1f}%']
-        for k in 'name creator category'.split():
-            v = x.anns.get(k)
-            if v: s.append( f'{k}: {v}' )
-        s.append(f"upload name: {x.avatar.name}")
-        return '\n  '.join(s)
+    # compose together all images for easy display
+    # TODO: try pyplt to make montage table with columns, +legends numbers?
+    ims = [ Image.open(BytesIO(b64decode( x.image.base64 )))
+            for x in xs if 'base64' in x.image ]
+    wtotal = sum(( im.width for im in ims ))
+    hmax = max(( im.height for im in ims  ))
+    montage = Image.new('RGB', (wtotal, hmax))
 
-    await m.reply('Raw results\n' + '\n'.join(map(go, xs)))
+    # horizontally
+    x = 0
+    for im in ims:
+        montage.paste(im, (x, 0))
+        x += im.width
 
-    return await process_matches(m, xs)
+    bio = BytesIO()
+    montage.save(bio, format='jpeg', quality=85)
+    bio.seek(0) # prepare for reading
+
+    def go(idx, sim, avatar, anns, **kwargs):
+        s = f'- {sim*100:.1f}% '
+        s += anns.name if 'name' in anns else '(unknown)'
+        if 'creator' in anns:
+            s += f' by {anns.creator}'
+        if 'category' in anns:
+            s += f' in the {anns.category} category'
+        # TODO: do we want to expose those (private) info?
+        s += f', upload name: "{avatar.name}"'
+        s += f' #{idx}'
+        return s
+
+    await m.reply(
+            'Closest similar matches:\n' + '\n'.join([go(**x) for x in xs]),
+            file=File(bio, filename='results.jpg'))
+
+    info('results: '+ ', '.join(( f'#{x.idx} {x.sim*100:.1f}% "{x.avatar.id}"' for x in xs )))
+
+    # TODO: revisit implementation
+    #return await process_matches(m, xs)
 
 
 def anns_counter(xs, attr):
@@ -260,4 +289,4 @@ async def process_matches(m, xs):
 
 
 # let's go!
-client.run(os.environ.get('DISCORD_BOT_TOKEN'))
+client.run(os.environ['DISCORD_BOT_TOKEN'])
