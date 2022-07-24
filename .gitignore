@@ -1,0 +1,5 @@
+*.log
+model_*
+database_*
+annotations_*
+fs_all.json.gz
