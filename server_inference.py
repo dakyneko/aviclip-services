@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse
 
 
 # grayscale only
-main_dir = '../pics_heads_224x224'
+#main_dir = '../pics_heads_224x224'
+main_dir = '../pics_thumbs_v3-normalized-grayscaled_216x384'
 
 def path_to_thumb(f, dir=main_dir):
     n = os.path.basename(f)
@@ -21,7 +22,8 @@ def imgs_to_batch(fs):
 
 def image_open(f):
     with Image.open(f) as im:
-        return im.getchannel('L')
+        return im.getchannel('L') # for heads
+        #return im.getchannel('R') # for body
 
 def ims_to_batch(ims):
     b = torch.stack([ Tensor( np.array( im ) ) for im in ims ])
@@ -39,7 +41,8 @@ def batch_to_imgs(b):
 # In[3]:
 
 
-model_name = 'model_vrc-heads_similarity3_clip_v2-grayscale-50epoches'
+#model_name = 'model_vrc-heads_similarity3_clip_v2-grayscale-50epoches'
+model_name = 'model_vrc_similarity3_clip_v2-grayscale-75epoches'
 
 
 # In[4]:
@@ -51,7 +54,8 @@ x = torch.load( f'database_aid-embeds_{model_name}', map_location=torch.device(d
 embeds = x['embeds']
 aids = x['aids']
 assert len(embeds) == len(aids)
-embeds.shape, len(aids)
+print('embeds aids', embeds.shape, len(aids))
+del x
 
 
 # In[6]:
@@ -168,7 +172,7 @@ app = FastAPI()
 
 @app.get("/")
 def get_root():
-    return {"Hello": "World"}
+    return "Hi, this is aviCLIP"
 
 
 
@@ -216,7 +220,6 @@ async def process_image(image):
 
 # TODO: support batch?
 # TODO: try multiple variants (brightness, crop, etc?)
-# TODO: send back images of match, base64?
 
 @app.post("/query")
 async def post_query(image: UploadFile, limit: int = 5):
@@ -234,7 +237,8 @@ async def post_query(image: UploadFile, limit: int = 5):
         fpath = path_to_thumb( m.f )
         imb64 = None
         if os.path.exists(fpath):
-            with Image.open(path_to_thumb( m.f )) as im2:
+            with Image.open( fpath ) as im2:
+                im2 = ImageOps.grayscale( im2 ) # they are RGBA
                 imb64 = im_to_base64( im2, format='jpeg' )
         return dict_nonull(
             idx=idx,
