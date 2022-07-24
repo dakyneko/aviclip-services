@@ -227,66 +227,6 @@ async def process_attachment(m, a):
 
     info('results: '+ ', '.join(( f'#{x.idx} {x.sim*100:.1f}% "{x.avatar.id}"' for x in xs )))
 
-    # TODO: revisit implementation
-    #return await process_matches(m, xs)
-
-
-def anns_counter(xs, attr):
-    return dict(Counter(( x.anns.get(attr, None) for x in xs )).most_common())
-
-def guess_from_attr(cnt_by_attr, attr_name, xs, best_score):
-    if list(cnt_by_attr.keys()) == [None]:
-        cnt = cnt_by_attr[None]
-        if cnt == len(xs):
-            s = f"- All {cnt}"
-        else:
-            s = f"- The {cnt} of the {len(xs)}"
-        s += f" best matches have unknown {attr_name}."
-    elif len(cnt_by_attr) == 1:
-        q = 'good' if best_score >= good_score else 'approximate'
-        v, cnt = next(iter(cnt_by_attr.items()))
-        s = f"- I found a {q} match with {attr_name} '{v}'"
-        if cnt_by_attr[v] > 1:
-            s += f" (found {cnt} times)"
-    elif len(cnt_by_attr) == 2 and None in cnt_by_attr:
-        cntNone = cnt_by_attr[None]
-        del cnt_by_attr[None]
-        v, cnt = next(iter(cnt_by_attr.items()))
-        s = f"- I found {cntNone} matches for which we don't know their {attr_name} and {cnt} others is {v}"
-    else:
-        s = f"- The best matches have different {attr_name}s, it's unconclusive."
-    return [ s ]
-
-
-async def process_matches(m, xs):
-    # summarize the matches
-    xs_min  = [ x for x in xs if x.sim > min_score ]
-    has_min_match = len(xs_min) > 0
-
-    ss = []
-
-    # group close to 1st best match
-    if has_min_match:
-        ss.append( "\N{WHITE HEAVY CHECK MARK} I took your image and run a query against my database. Here are the results:" )
-        best_score = xs_min[0].sim
-        close_score = best_score - 0.05
-        xs_bests = [ x for x in xs if x.sim >= close_score ]
-
-        by_names = anns_counter(xs_bests, 'name')
-        by_creator = anns_counter(xs_bests, 'creator')
-        by_category = anns_counter(xs_bests, 'category')
-
-        # TODO: for name mention the creator if present
-        guess = partial(guess_from_attr, xs=xs_bests, best_score=best_score)
-        ss.extend(guess(by_names, 'name'))
-        ss.extend(guess(by_creator, 'creator'))
-        ss.extend(guess(by_category, 'category'))
-    else:
-        ss.append( "\N{CROSS MARK} Unfortunately, I run a query but nothing came up similar enough. If you have more pictures, you can try them." )
-
-    #s = "I searched but found no conclusive match"
-    await m.reply( ss[0] + '\n' + '\n'.join(ss[1:]) )
-
 
 # let's go!
 client.run(os.environ['DISCORD_BOT_TOKEN'])
