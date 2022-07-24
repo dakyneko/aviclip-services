@@ -10,8 +10,8 @@ from fastapi.responses import JSONResponse
 
 
 # grayscale only
-main_dir = '../pics_heads_224x224'
-#main_dir = '../pics_thumbs_v3-normalized-grayscaled_216x384'
+main_dir = 'pics_heads_224x224'
+#main_dir = 'pics_thumbs_v3-normalized-grayscaled_216x384'
 
 def path_to_thumb(f, dir=main_dir):
     n = os.path.basename(f)
