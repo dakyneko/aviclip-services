@@ -1,0 +1,7 @@
+uvicorn
+python-multipart
+fastapi
+fastai
+pandas
+pyyaml
+fastcore
