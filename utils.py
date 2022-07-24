@@ -468,3 +468,11 @@ def merge_anns(anns1, anns2):
 
 def dict_nonull(**kwargs):
     return { k:v for k,v in kwargs.items() if v != None }
+
+def jsonl_dump(xs, fd):
+    for x in xs:
+        fd.write((json.dumps(x) + '\n').encode('utf8'))
+
+def jsonl_load(fd):
+    for l in fd:
+        yield json.loads(l)

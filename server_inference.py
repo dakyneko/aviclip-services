@@ -205,21 +205,21 @@ async def process_image(image):
         raise Exception('image too small')
 
     im = ImageOps.grayscale(im)
-    if im.size != (input_size, input_size):
-        aratio = w / h
-        if aratio > 1.5 or aratio < 1/1.5:
-            raise Exception('image should be squarish')
 
-        if w > h:
-            im = im.resize((int(input_size*aratio), input_size))
-        else:
-            im = im.resize((input_size, int(input_size/aratio)))
-        im = im.crop((0, 0, input_size, input_size))
+    aratio = w / h
+    if aratio > 1.5 or aratio < 1/1.5:
+        raise Exception('image should be squarish')
+
+    if im.size != (input_size, input_size):
+        resize = ((int(input_size*aratio), input_size) if w > h
+            else (input_size, int(input_size/aratio)))
+        im = im.resize(resize).crop((0, 0, input_size, input_size))
+
     #im = equalize(im)
     return im
 
 # TODO: support batch?
-# TODO: try multiple variants (brightness, crop, etc?)
+# TODO: try multiple variants (brightness, flip, zoom in/out, crop, etc?)
 
 @app.post("/query")
 async def post_query(image: UploadFile, limit: int = 5):
