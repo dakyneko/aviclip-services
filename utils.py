@@ -95,15 +95,21 @@ def im_to_gallery(ims, cols = 5, figsize = (15,5), titles=None, cmap=None):
         fig, axs = plt.subplots(1, cols, figsize=figsize)
         for col, im in enumerate(ims_):
             i = row*cols+col
-            ax = axs[col]
+            if cols == 1: ax = axs
+            else: ax = axs[col]
             ax.axis('off')
             if titles:
                 ax.set_title(titles[i])
             ax.imshow(im, aspect='equal', cmap=cmap)
+        plt.axis('off')
         plt.show()
 
 def path_to_gallery(fs, **kwargs):
     im_to_gallery([ Image.open(f) for f in fs ], **kwargs)
+
+def path_to_autocrop(path):
+    im = Image.open( path )
+    return im.crop( im.getbbox() )
 
 def recur_f(f, x):
     type_ = type(x)
@@ -239,8 +245,7 @@ def make_ms(fs, cache_file="py_dataset_ms.json.gz"):
                 im=Bunch(size=list(im.size), mode=im.mode),
                 **bunchize(m))
 
-    def cached_go(i, f, cache):
-        pb.update(i)
+    def cached_go(f, cache):
         if f in cache:
             return bunchize(cache[f])
         else:
@@ -248,17 +253,24 @@ def make_ms(fs, cache_file="py_dataset_ms.json.gz"):
             cache[f] = m
             return m
 
-    pb = progress_bar(range(len(fs)))
     # we remove the ones without meta, 'extra/targetPlayerId', or missing it in visiblePlayers
     if os.path.exists(cache_file):
         with gzip.open(cache_file, 'r') as fd:
             cache = json.load(fd)
     else:
         cache = {}
-    ms = list(filter(identity, [ cached_go(i, f, cache) for i,f in enumerate(fs) ]))
+    ms = list(filter(identity, [
+        cached_go(f, cache)
+        for f in with_progressbar(fs) ]))
     with gzip.open(cache_file, 'wt') as fd:
         json.dump(cache, fd)
     return ms
+
+
+def load_ms(cache_file="py_dataset_ms.json.gz"):
+    with gzip.open(cache_file, 'r') as fd:
+        cache = json.load(fd)
+    return [ bunchize(m) for f, m in cache.items() if type(m) == dict ]
 
 
 def ms_sort_by_facing(ms, facing=Tensor([0, 0, -1])):
@@ -395,11 +407,16 @@ def im_to_base64(pil_im, format='png', quality=85):
     pil_im.save(b, format, quality=quality)
     return base64.b64encode(b.getvalue()).decode('ascii')
 
-def select_keys(m, ks):
-    return { k:v for k,v in m.items() if k in set(ks) }
+def select_keys(m, ks): # rebuild to follow ks order
+    return { k: m[k] for k in ks if k in m }
 
-def exclude_keys(m, ks):
-    return { k:v for k,v in m.items() if not k in set(ks) }
+def filter_keys(m, ks): # preserve original map order
+    ks = set(ks)
+    return { k:v for k,v in m.items() if k in ks }
+
+def remove_keys(m, ks):
+    ks = set(ks)
+    return { k:v for k,v in m.items() if not k in ks }
 
 def safe_removes(xs, to_removes):
     "Remove provided elements from xs in place; doesn't fail if missing."

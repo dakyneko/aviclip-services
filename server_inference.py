@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 
 # grayscale only
-main_dir = 'pics_heads_224x224'
+main_dir = '../pics_heads_224x224'
 
 def path_to_thumb(f, dir=main_dir):
     n = os.path.basename(f)
@@ -54,18 +54,6 @@ assert len(embeds) == len(aids)
 embeds.shape, len(aids)
 
 
-# In[5]:
-
-
-fpath = 'pics/'
-#fs = [ f
-#      for fpath in listdir('pics/') if re.search(r'20\d\d-\d\d', fpath)
-#      for f in listdir(fpath) if re.search(r'\.webp|\.png', f) ]
-with gzip.open('fs_all.json.gz', 'rt') as fd:
-    fs = json.load(fd)
-len(fs), fs[0]
-
-
 # In[6]:
 
 
@@ -95,7 +83,8 @@ def go(ms0):
     ms = [ m for aid,ms_ in msd2.items() for m in ms_ ]
     return msd2, ms
 
-msd, ms = go(make_ms(fs))
+msd, ms = go(load_ms())
+fs = [ m.f for m in ms ]
 msd_aids = list(msd.keys())
 
 len(set([ m.targetPlayer.avatar.id for m in ms ])), len(msd), len(ms), list(msd.keys())[0:10]
