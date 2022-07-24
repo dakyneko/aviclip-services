@@ -1,4 +1,8 @@
 import sqlite3
+import logging
+import types
+import json
+from fastcore.basics import AttrDict
 
 class SQLiteDB(object):
 
@@ -11,6 +15,7 @@ class SQLiteDB(object):
         self.execute('pragma mmap_size = 30000000000')
 
         self._create_table(col_types)
+        self.typed_cols = dict(col_types)
         self.cols = list(zip(*col_types))[0]
 
         self.insert_query = 'INSERT OR IGNORE INTO %s VALUES (%s)' % (self.name, ', '.join(['?'] * len(self.cols)))
@@ -28,9 +33,22 @@ class SQLiteDB(object):
     def unique_col(self):
         return self.cols[0]
 
+    def _decoerce_value(self, type, v):
+        if v is None:
+            return v
+        elif type == 'json':
+            return AttrDict(json.loads( v ))
+        else:
+            return v
+
+    def _row_factory(self, c, vs):
+        result = sqlite3.Row(c, vs)
+        return AttrDict({ k: self._decoerce_value(self.typed_cols.get(k), result[k]) for k in result.keys() })
+
+
     def _execute(self, *args, chunk_size=1000):
         with sqlite3.connect(self.path, timeout=1000) as con:
-            con.row_factory = sqlite3.Row
+            con.row_factory = self._row_factory
             cur = con.cursor()
             if type(args[-1]) == types.GeneratorType:
                 cur.executemany(*args)
@@ -41,8 +59,7 @@ class SQLiteDB(object):
                 results = cur.fetchmany(chunk_size)
                 if len(results) == 0:
                     break
-                for result in results:
-                    yield result
+                yield from results
 
     def execute(self, *args, generator=False, **kwargs):
         results = self._execute(*args, **kwargs)
@@ -55,34 +72,48 @@ class SQLiteDB(object):
             self.execute(*args)
             return True
         except sqlite3.IntegrityError:
+            logging.exception('error')
             return False
 
     def get(self, rowid):
         results = self.execute('SELECT * FROM %s WHERE rowid = ?' % self.name, (rowid,))
-        return Bunch(results[0])
+        return results[0]
 
-    def search(self, text, col):
-        results = self.execute('SELECT * from %s WHERE %s MATCH ?' % (self.name, col), (text,))
-        for result in results:
-            yield(Bunch(result))
+    def get_aid(self, aid):
+        results = self.execute('SELECT * FROM %s WHERE avatar_id = ?' % self.name, (aid,))
+        return results[0]
+
+    def search(self, op='=', **query):
+        wheres = ' AND '.join(( f'{k} {op} ?' for k in query ))
+        yield from self.execute(f'SELECT * from {self.name} WHERE {wheres}', list(query.values()))
+
+    def match(self, **query):
+        assert(len(query) == 1)
+        yield from self.search(op='MATCH', **query)
 
     def size(self):
         results = self.execute('SELECT COUNT(*) FROM %s' % self.name)
         return results[0][0]
 
     def iter_rows(self):
-        rows = self.execute('SELECT * FROM %s' % self.name, generator=True)
-        for row in rows:
-            yield(Bunch(row))
+        yield from self.execute('SELECT * FROM %s' % self.name, generator=True)
 
     def contains(self, elt):
         results = self.execute('SELECT COUNT(*) FROM %s WHERE %s = ?' % (self.name, self.unique_col), (elt[self.unique_col],))
         count = results[0][0]
         return count == 1
 
+    def _coerce_value(self, type, v):
+        if v is None:
+            return v
+        elif type == 'json':
+            return json.dumps( v )
+        else:
+            return v
+
     def _iter_insertable_elts(self, elts):
         for elt in elts:
-            yield(tuple([elt.get(col, None) for col in self.cols]))
+            yield tuple([ self._coerce_value(type, elt.get(col, None)) for col, type in self.typed_cols.items() ])
 
     def insert(self, elts):
         return self.safely_execute(self.insert_query, self._iter_insertable_elts(elts))

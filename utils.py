@@ -10,7 +10,7 @@ from PIL import Image, ImageOps
 from pprint import pprint
 from copy import deepcopy
 from random import Random
-from types import GeneratorType as generator
+import types
 
 from fastai.vision.all import *
 from fastcore.basics import AttrDict
@@ -433,7 +433,7 @@ def safe_removes(xs, to_removes):
 
 def with_progressbar(xs, n=None):
     if n is None:
-        if type(xs) is generator:
+        if type(xs) is types.GeneratorType:
             xs = list(xs)
         n = len(xs)
     pb = progress_bar(range(n))
