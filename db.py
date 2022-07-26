@@ -120,3 +120,25 @@ class SQLiteDB(object):
 
     def update(self, elt):
         return self.safely_execute(self.update_query, tuple([elt.get(col, None) for col in self.cols[1:]] + [elt[self.unique_col]]))
+
+
+
+class AviDB(SQLiteDB):
+  def __init__(self, path='avi.db'):
+    col_types = [
+      ('avatar_id', 'text'),
+      ('name', 'text'),
+      ('creator', 'text'),
+      ('url', 'text'),
+      ('category', 'text'),
+      ('dataset', 'text'),
+      ('extras', 'json')
+    ]
+    name = 'avi'
+    super().__init__(path=path, name=name, col_types=col_types)
+
+  def _create_table(self, col_types):
+    self.execute('CREATE VIRTUAL TABLE IF NOT EXISTS %s USING fts4(%s)' % (self.name, ', '.join(['%s %s %s' % (c, t, 'UNIQUE' if i == 0 else '') for i, (c, t) in enumerate(col_types)])))
+
+  def _create_index(self):
+    pass
