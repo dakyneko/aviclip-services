@@ -422,6 +422,10 @@ def remove_keys(m, ks):
     ks = set(ks)
     return { k:v for k,v in m.items() if not k in ks }
 
+def emptyNone(x):
+    if len(x) == 0: return None
+    else: return x
+
 def safe_removes(xs, to_removes):
     "Remove provided elements from xs in place; doesn't fail if missing."
     for x in to_removes:

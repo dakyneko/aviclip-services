@@ -5,3 +5,4 @@ fastai
 pandas
 pyyaml
 fastcore
+sqlalchemy
