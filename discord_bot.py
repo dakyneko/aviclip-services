@@ -2,6 +2,7 @@
 # coding: utf-8
 
 from discord import *
+import discord
 import os, io, logging, requests
 from PIL import Image, UnidentifiedImageError
 from fastcore.basics import AttrDict
@@ -44,7 +45,7 @@ l = setup_logs()
 debug = l.debug; info = l.info; warn = l.warning; error = l.error; exception = l.exception
 
 
-client = Client()
+client = Client(intents=discord.Intents.default())
 
 @client.event
 async def on_ready():
@@ -107,15 +108,50 @@ async def on_message(m):
 
     # bot is addressed
     try:
-        await process_message(m)
+        if any(( t in m.content for t in ('sauce', 'source') )):
+            await process_message_sauce(m)
+        elif any(( t in m.content for t in ('button') )):
+            await process_message_button(m)
+        else:
+            return await confused(m, 'message without request')
     except:
         await exploded(m)
         exception('boom')
 
-async def process_message(m):
-    if not any(( t in m.content for t in ('sauce', 'source') )):
-        return await confused(m, 'message without request')
 
+# TODO: for annotation ui
+async def process_message_button(m):
+    await m.reply(view=MyView())
+
+class MyView(discord.ui.View):
+    @discord.ui.button(label='Click', style=discord.ButtonStyle.blurple)
+    async def receive(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(MyModal())
+
+class MyModal(discord.ui.Modal, title='Feedback'):
+    name = discord.ui.TextInput(
+        label='Name',
+        placeholder='Your name here...',
+    )
+    feedback = discord.ui.TextInput(
+        label='What do you think of this new feature?',
+        style=discord.TextStyle.long,
+        placeholder='Type your feedback here...',
+        required=False,
+        max_length=300,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.send_message(f'Thanks for your feedback, {self.name.value}!', ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        await interaction.response.send_message('Oops! Something went wrong.', ephemeral=True)
+
+        # Make sure we know what the error actually is
+        traceback.print_tb(error.__traceback__)
+
+
+async def process_message_sauce(m):
     ms = [ m ]
     if m.reference:
         r = m.reference
@@ -132,7 +168,7 @@ async def process_message(m):
             a = m.attachments[0]
             if not a.content_type or not a.content_type.startswith('image/'):
                 return await confused(m, f'attachment of unknown type: {a.content_type} for {a.filename}')
-            with m.channel.typing():
+            async with m.channel.typing():
                 return await process_attachment(m, a)
 
     return await confused(m, f'no attachment found anywhere')
