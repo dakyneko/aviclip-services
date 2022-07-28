@@ -2,15 +2,16 @@
 # coding: utf-8
 
 from discord import *
-import discord
-import os, io, logging, requests
+from discord.ui import *
+import os, io, gzip, logging, requests, yaml, itertools, re, json
 from PIL import Image, UnidentifiedImageError
 from fastcore.basics import AttrDict
 from collections import Counter
 from functools import partial
 from base64 import b64decode
 from io import BytesIO
-import itertools
+from time import time
+from collections import defaultdict
 
 # Q: could replace requests by grequests for async?
 
@@ -45,7 +46,7 @@ l = setup_logs()
 debug = l.debug; info = l.info; warn = l.warning; error = l.error; exception = l.exception
 
 
-client = Client(intents=discord.Intents.default())
+client = Client(intents=Intents.default())
 
 @client.event
 async def on_ready():
@@ -53,7 +54,6 @@ async def on_ready():
 
 
 def msg_to_str(m):
-
     s = f'{m.guild} {m.author}'
 
     c = m.channel
@@ -80,7 +80,8 @@ def msg_to_str(m):
         if r.cached_message:
             s += f' \nfrom cache: {msg_to_str(r.cached_message)}'
 
-    s += f'\n{m.content}'
+    if m.content: # we need intent message to see other's messages
+        s += f'\n{m.content}'
 
     return s
 
@@ -110,45 +111,165 @@ async def on_message(m):
     try:
         if any(( t in m.content for t in ('sauce', 'source') )):
             await process_message_sauce(m)
-        elif any(( t in m.content for t in ('button') )):
-            await process_message_button(m)
+        elif any(( t in m.content for t in ('next', 'group') )): # TODO: annotate command
+            await process_message_annotate(m)
         else:
             return await confused(m, 'message without request')
     except:
-        await exploded(m)
         exception('boom')
+        await exploded(m)
 
 
-# TODO: for annotation ui
-async def process_message_button(m):
-    await m.reply(view=MyView())
+def bunchize(x):
+    if isinstance(x, list):
+        return [ bunchize(y) for y in x ]
+    if isinstance(x, dict):
+        return AttrDict({ k:bunchize(v) for k,v in x.items() })
+    else:
+        return x
 
-class MyView(discord.ui.View):
-    @discord.ui.button(label='Click', style=discord.ButtonStyle.blurple)
-    async def receive(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(MyModal())
+def chunker(iterable, n):
+    if type(iterable) == list:
+        iterable = iter(iterable)
+    while True:
+        x = next(iterable, None)
+        if x != None:
+            yield [x] + list(itertools.islice(iterable, n-1))
+        else:
+            break
 
-class MyModal(discord.ui.Modal, title='Feedback'):
-    name = discord.ui.TextInput(
+def autocrop(im):
+    return im.crop( im.getbbox() )
+
+
+with gzip.open('annotations_rs-vs3_gs_todo.yaml.gz', 'rt') as fd:
+    gs = list(bunchize(yaml.load(fd, Loader=yaml.Loader)))
+info(f'loaded {len(gs)} groups for annotations')
+with open('annotations_rs-vs3_gs_logs.jsonl', 'rt') as fd:
+    lanns = {}
+    user_scores = defaultdict(lambda: AttrDict(user=None, score=0))
+    for l in fd:
+        j = bunchize(json.loads(l))
+        lanns[j.i] = j # this replace any prior annotation
+        user_score = user_scores[j.user.id]
+        user_score.user = j.user
+        user_score.score += 1
+info(f'loaded {len(lanns)} logs for annotations')
+
+def write_lann(lann):
+    with open('annotations_rs-vs3_gs_logs.jsonl', 'at') as fd:
+        fd.write(json.dumps(lann) + '\n')
+
+
+async def process_message_annotate(m):
+    try:
+        (idx,) = re.findall(r'group (\d+)', m.content)
+        g = gs[int(idx)]
+    except ValueError:
+        g = next(( g for g in gs if g.i not in lanns ))
+
+    info(f'prepare annotation {g.i}')
+
+    s = [ f'**Group #{g.i}** with {len(g.idents)} entries\n',
+            f'common words:', ]
+    s.extend(( f'- {w}: {cnt}' for w, cnt in g.names.items() ))
+    s.append('')
+    if len(g.hints) > 0:
+        s.append(f'hints:')
+        s.extend(( f'- {h}' for h in g.hints ))
+    else:
+        s.append('without any hint')
+
+    already_sauced = g.i in lanns
+    if already_sauced:
+        s.append('\n\N{WARNING SIGN} Note: This group was already sauced')
+
+    def go(f):
+        im = autocrop(Image.open(f'../dataset_ripperstore/{f}'))
+        bg = Image.new('RGB', im.size, 3*(255,))
+        return Image.composite(im, bg, im)
+    ims = [ go(f) for f in g.imgs_vdedup ]
+    bio = ims_to_montage(ims)
+
+    await m.reply('\n'.join(s),
+            file=File(bio, filename='results.jpg'),
+            view=MyView(g),
+        )
+
+# TODO: create this view dynamically above, simpler + can change button label if already sauced!
+class MyView(View):
+    def __init__(self, g):
+        super().__init__()
+        self.g = g
+
+    @button(label='sauce it', style=ButtonStyle.blurple)
+    async def receive(self, interaction: Interaction, button: Button):
+        await interaction.response.send_modal(MyModal(g=self.g))
+
+modal_fields = 'name creator shop comment'.split()
+
+class MyModal(Modal, title='Saucing an avatar, yay'):
+    name = TextInput(
         label='Name',
-        placeholder='Your name here...',
-    )
-    feedback = discord.ui.TextInput(
-        label='What do you think of this new feature?',
-        style=discord.TextStyle.long,
-        placeholder='Type your feedback here...',
         required=False,
-        max_length=300,
+    )
+    creator = TextInput(
+        label='Creator',
+        required=False,
+    )
+    shop = TextInput(
+        label='URL to buy',
+        placeholder='https://something.gumroad.com',
+        required=False,
+    )
+    comment = TextInput(
+        label='Comment',
+        placeholder='eg: TDA, cannot buy, discord nitro only, etc',
+        style=TextStyle.long,
+        required=False,
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.send_message(f'Thanks for your feedback, {self.name.value}!', ephemeral=True)
+    def __init__(self, g):
+        # restore values we have if they exists so they can be edited easily
+        if g.i in lanns:
+            lann = lanns[g.i]
+            for k in modal_fields:
+                if k in lann:
+                    f = getattr(self, k)
+                    f.default = lann[k]
 
-    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        super().__init__()
+        self.g = g
+
+    async def on_submit(self, interaction: Interaction):
+        data = AttrDict({ k: getattr(self, k).value for k in modal_fields })
+        user = interaction.user
+        g = self.g
+        info(f'Modal data from {user} for group {g.i}: {data}')
+
+        data.i = g.i
+        data.user = AttrDict(id=user.id, name=user.name)
+        data.time = int(time())
+
+        lanns[g.i] = data
+        write_lann(data)
+
+        user_score = user_scores[user.id]
+        user_score.user = data.user
+        user_score.score += 1
+
+        # TODO: diversify messages, look nicer
+        # could send messages prop to number of points
+        await interaction.response.send_message(
+                f'<@{user.id}> Thankies! \N{TWO HEARTS} You have {user_score.score} points, congrats!',
+                ephemeral=False, # keep public?
+                )
+
+    async def on_error(self, interaction: Interaction, error: Exception) -> None:
         await interaction.response.send_message('Oops! Something went wrong.', ephemeral=True)
 
         # Make sure we know what the error actually is
-        traceback.print_tb(error.__traceback__)
+        exception(error)
 
 
 async def process_message_sauce(m):
@@ -174,23 +295,24 @@ async def process_message_sauce(m):
     return await confused(m, f'no attachment found anywhere')
 
 
-def bunchize(x):
-    if isinstance(x, list):
-        return [ bunchize(y) for y in x ]
-    if isinstance(x, dict):
-        return AttrDict({ k:bunchize(v) for k,v in x.items() })
-    else:
-        return x
+def ims_to_montage(ims, cols=6, format='jpeg', quality=85):
+    wtotal = max(( sum(( im.width for im in ims_ )) for ims_ in chunker(ims, cols) ))
+    htotal = sum(( max(( im.height for im in ims_ )) for ims_ in chunker(ims, cols)  ))
+    montage = Image.new('RGB', (wtotal, htotal), 3*(255,))
 
-def chunker(iterable, n):
-    if type(iterable) == list:
-        iterable = iter(iterable)
-    while True:
-        x = next(iterable, None)
-        if x != None:
-            yield [x] + list(itertools.islice(iterable, n-1))
-        else:
-            break
+    # in grid
+    y = 0
+    for ims_ in chunker(ims, cols):
+        x = 0
+        for im in ims_:
+            montage.paste(im, (x, y))
+            x += im.width
+        y += max(( im.height for im in ims_ ))
+
+    bio = BytesIO()
+    montage.save(bio, format=format, quality=quality)
+    bio.seek(0) # prepare for reading
+    return bio
 
 async def process_attachment(m, a):
     info(f'processing attachment mine={a.content_type} size={a.size/1024:.2f}KB at {a.url}')
@@ -217,7 +339,7 @@ async def process_attachment(m, a):
     # query API
     try:
         r = requests.post(f'{api_url}/query',
-                params=dict(limit=5),
+                params=dict(limit=6),
                 files=dict(image=io.BytesIO(raw)),
             )
         j = bunchize(r.json())
@@ -241,23 +363,7 @@ async def process_attachment(m, a):
     # TODO: try pyplt to make montage table with columns, +legends numbers?
     ims = [ Image.open(BytesIO(b64decode( x.image.base64 )))
             for x in xs if 'base64' in x.image ]
-    cols = 3
-    wtotal = max(( sum(( im.width for im in ims_ )) for ims_ in chunker(ims, cols) ))
-    htotal = sum(( max(( im.height for im in ims_ )) for ims_ in chunker(ims, cols)  ))
-    montage = Image.new('RGB', (wtotal, htotal))
-
-    # in grid
-    y = 0
-    for ims_ in chunker(ims, cols):
-        x = 0
-        for im in ims_:
-            montage.paste(im, (x, y))
-            x += im.width
-        y += max(( im.height for im in ims_ ))
-
-    bio = BytesIO()
-    montage.save(bio, format='jpeg', quality=85)
-    bio.seek(0) # prepare for reading
+    bio = ims_to_montage(ims)
 
     def go(idx, sim, avatar, anns, **kwargs):
         s = f'- {sim*100:.1f}% '
@@ -273,7 +379,8 @@ async def process_attachment(m, a):
 
     await m.reply(
             'Closest similar matches:\n' + '\n'.join([go(**x) for x in xs]),
-            file=File(bio, filename='results.jpg'))
+            file=File(bio, filename='results.jpg'),
+            )
 
     info('results: '+ ', '.join(( f'#{x.idx} {x.sim*100:.1f}% "{x.avatar.id}"' for x in xs )))
 

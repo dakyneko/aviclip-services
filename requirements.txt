@@ -6,3 +6,4 @@ pandas
 pyyaml
 fastcore
 sqlalchemy
+git+https://github.com/Rapptz/discord.py

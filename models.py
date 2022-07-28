@@ -59,3 +59,4 @@ class Model(Base):
 
 # TODO: model name<>alias table? with full text search?
 # TODO: avatar<>images table?
+# TODO: avatar<>credit (who sauce it, discord annotater etc?)
