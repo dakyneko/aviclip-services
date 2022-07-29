@@ -3,7 +3,7 @@
 
 from discord import *
 from discord.ui import *
-import os, io, gzip, logging, requests, yaml, itertools, re, json
+import os, io, gzip, logging, requests, yaml, itertools, re, json, random
 from PIL import Image, UnidentifiedImageError
 from fastcore.basics import AttrDict
 from collections import Counter
@@ -111,8 +111,10 @@ async def on_message(m):
     try:
         if any(( t in m.content for t in ('sauce', 'source') )):
             await process_message_sauce(m)
-        elif any(( t in m.content for t in ('next', 'group') )): # TODO: annotate command
+        elif any(( t in m.content for t in ('next', 'group') )):
             await process_message_annotate(m)
+        elif any(( t in m.content for t in ('search',) )):
+            await process_message_search(m)
         else:
             return await confused(m, 'message without request')
     except:
@@ -151,6 +153,7 @@ with open('annotations_rs-vs3_gs_logs.jsonl', 'rt') as fd:
     for l in fd:
         j = bunchize(json.loads(l))
         lanns[j.i] = j # this replace any prior annotation
+
         user_score = user_scores[j.user.id]
         user_score.user = j.user
         user_score.score += 1
@@ -163,7 +166,7 @@ def write_lann(lann):
 
 async def process_message_annotate(m):
     try:
-        (idx,) = re.findall(r'group (\d+)', m.content)
+        (idx,) = re.findall(r'group #?(\d+)', m.content)
         g = gs[int(idx)]
     except ValueError:
         g = next(( g for g in gs if g.i not in lanns ))
@@ -171,18 +174,18 @@ async def process_message_annotate(m):
     info(f'prepare annotation {g.i}')
 
     s = [ f'**Group #{g.i}** with {len(g.idents)} entries\n',
-            f'common words:', ]
+            f'**Common words**:', ]
     s.extend(( f'- {w}: {cnt}' for w, cnt in g.names.items() ))
     s.append('')
     if len(g.hints) > 0:
-        s.append(f'hints:')
+        s.append(f'**Hints**:')
         s.extend(( f'- {h}' for h in g.hints ))
     else:
         s.append('without any hint')
 
     already_sauced = g.i in lanns
     if already_sauced:
-        s.append('\n\N{WARNING SIGN} Note: This group was already sauced')
+        s.append('\n\N{WARNING SIGN} **Note**: This group was already sauced')
 
     def go(f):
         im = autocrop(Image.open(f'../dataset_ripperstore/{f}'))
@@ -206,7 +209,7 @@ class MyView(View):
     async def receive(self, interaction: Interaction, button: Button):
         await interaction.response.send_modal(MyModal(g=self.g))
 
-modal_fields = 'name creator shop comment'.split()
+modal_fields = 'name creator url comment'.split()
 
 class MyModal(Modal, title='Saucing an avatar, yay'):
     name = TextInput(
@@ -217,7 +220,7 @@ class MyModal(Modal, title='Saucing an avatar, yay'):
         label='Creator',
         required=False,
     )
-    shop = TextInput(
+    url = TextInput(
         label='URL to buy',
         placeholder='https://something.gumroad.com',
         required=False,
@@ -260,8 +263,32 @@ class MyModal(Modal, title='Saucing an avatar, yay'):
 
         # TODO: diversify messages, look nicer
         # could send messages prop to number of points
+        s1 = random.choice([
+            "Thankies! \N{TWO HEARTS}",
+            "is so kind! \N{BLACK HEART SUIT}",
+            "\N{ORANGE HEART} Thank you for your help!",
+            "Your contributions are very appreciated!",
+            "That's awesome, thank you \N{SMILING CAT FACE WITH HEART-SHAPED EYES}",
+            "*headpats*",
+            "*cuddles* \N{SMILING CAT FACE WITH HEART-SHAPED EYES}",
+            "You deserve a medal \N{FIRST PLACE MEDAL}",
+            "So sweet! \N{SMILING FACE WITH SMILING EYES AND THREE HEARTS}",
+            "You're a sweetie \N{SPARKLING HEART}",
+            "Yes you're cute",
+            "Very appreciated \N{SPARKLES}"
+        ])
+        s2 = random.choice([
+            "with {score} lovely contributions!",
+            "with a total of {score} contributions!",
+            "{score} love points!",
+            "{score} million headpats, I mean points!",
+            "{score} thousand cuddles, I mean points!",
+            "You reached {score} points!",
+            "Look, now {score} points, congrats!",
+            "Unbeatable {score} contributions!",
+        ])
         await interaction.response.send_message(
-                f'<@{user.id}> Thankies! \N{TWO HEARTS} You have {user_score.score} points, congrats!',
+                f'<@{user.id}> ' + s1 + ' ' + s2.format(score=user_score.score),
                 ephemeral=False, # keep public?
                 )
 
@@ -270,6 +297,40 @@ class MyModal(Modal, title='Saucing an avatar, yay'):
 
         # Make sure we know what the error actually is
         exception(error)
+
+
+async def process_message_search(m):
+    try:
+        (text,) = re.findall(r'search (.+)', m.content)
+    except ValueError:
+        return await confused(m, f'search missing text query?')
+
+    if len(text) < 3:
+        return await confused(m, f'search text query too short')
+
+    text = text.lower()
+    gs2 = [ g
+            for g in gs
+            if all(( any(( w in n for n in g.names  )) for w in text.split() )) ]
+    total = len(gs2)
+    gs2 = gs2[:5]
+
+    s = [ f'Found {total} groups matching \'{text}\':\n']
+
+    if len(gs2) == 0:
+        return # done
+
+    s.append(f'**Groups**:')
+    def go(i, idents, names, **kwargs):
+        s = [f'- **Group #{i}** with {len(idents)} samples']
+        s.append('  common words: ' + ', '.join(( f'{w} ({cnt}x)' for w, cnt in names.items() )))
+        return '\n'.join(s) + '\n'
+    s.extend(( go(**g) for g in gs2  ))
+
+    if len(gs2) != total:
+        s.append("\N{WARNING SIGN} **Note**: More groups matched but aren't shown here")
+
+    await m.reply('\n'.join(s))
 
 
 async def process_message_sauce(m):
